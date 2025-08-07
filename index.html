@@ -49,11 +49,14 @@
 
       const { uploadUrl, imageKey } = await response.json();
 
+
       // Upload selfie to S3
-      await fetch(uploadUrl, {
+        await fetch(uploadUrl, {
         method: 'PUT',
+        headers: { 'Content-Type': file.type || 'image/jpeg' }, // ← add this line
         body: file
-      });
+    });
+
 
       document.getElementById("status").innerText = "Uploaded successfully!";
     }
