@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Skincare Recommender</title>
+</head>
+<body>
+  <h2>Upload Your Selfie</h2>
+  <input type="file" id="selfie" accept="image/*"><br><br>
+
+  <label>Skin Type:</label>
+  <select id="skinType">
+    <option>Dry</option>
+    <option>Oily</option>
+    <option>Combination</option>
+    <option>Sensitive</option>
+  </select><br><br>
+
+  <label>Skin Concern:</label>
+  <select id="concern">
+    <option>Acne</option>
+    <option>Pigmentation</option>
+    <option>Dryness</option>
+    <option>Redness</option>
+  </select><br><br>
+
+  <label>Budget:</label>
+  <select id="budget">
+    <option><RM50</option>
+    <option>RM50–RM150</option>
+    <option>>RM150</option>
+  </select><br><br>
+
+  <button onclick="uploadForm()">Submit</button>
+
+  <p id="status"></p>
+
+  <script>
+    async function uploadForm() {
+      const file = document.getElementById('selfie').files[0];
+      const skinType = document.getElementById('skinType').value;
+      const concern = document.getElementById('concern').value;
+      const budget = document.getElementById('budget').value;
+
+      const response = await fetch('https://abc123xyz.execute-api.ap-southeast-1.amazonaws.com/generate-presigned-url', {
+        method: 'POST',
+        body: JSON.stringify({ filename: file.name, skinType, concern, budget }),
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const { uploadUrl, imageKey } = await response.json();
+
+      // Upload selfie to S3
+      await fetch(uploadUrl, {
+        method: 'PUT',
+        body: file
+      });
+
+      document.getElementById("status").innerText = "Uploaded successfully!";
+    }
+  </script>
+</body>
+</html>
