@@ -1,5 +1,10 @@
-KIV for now
-Issue with CORS when upload image to s3
+# KIV for now
+## Issue with CORS when upload image to s3
+
+![My Screenshot](img/CORS.png)
+![My Screenshot](img\CORS.png)
+
+
 
 🧪 Phase 1: Problem Definition & Architecture
 Goal: Recommend 3 skincare products based on user selfie + survey.
