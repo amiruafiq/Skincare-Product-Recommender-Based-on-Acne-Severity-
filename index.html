@@ -28,10 +28,11 @@
     <p class="muted">Images only, max 10 MB. Target: <code>uploaded/</code></p>
 
     <div class="row">
-      <!-- file input also hints mobile to open camera via capture attr -->
-      <input id="file" type="file" accept="image/*" capture="environment" />
+      <!-- Hint mobile browsers to use the FRONT camera -->
+      <input id="file" type="file" accept="image/*" capture="user" />
       <button id="go" class="btn">Upload</button>
       <button id="openCam" class="btn">Use Camera</button>
+      <button id="flip" class="btn ghost" style="display:none">Flip</button>
       <button id="snap" class="btn ghost" style="display:none">Snap</button>
       <button id="retake" class="btn gray" style="display:none">Retake</button>
       <button id="closeCam" class="btn gray" style="display:none">Close</button>
@@ -57,6 +58,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
 const fileEl  = document.getElementById('file');
 const goBtn   = document.getElementById('go');
 const openCam = document.getElementById('openCam');
+const flipBtn = document.getElementById('flip');
 const snapBtn = document.getElementById('snap');
 const retake  = document.getElementById('retake');
 const closeCam= document.getElementById('closeCam');
@@ -70,111 +72,104 @@ const videoBox= document.getElementById('videoBox');
 const canvas  = document.getElementById('canvas');
 
 let stream = null;
+let facing = 'environment'; // default for desktop
+if (/Mobi|Android|iPhone/i.test(navigator.userAgent)) facing = 'user'; // phone = front cam by default
 
-// ========== Existing “choose file” upload ==========
+// ===== File picker upload =====
 goBtn.onclick = async () => {
   const f = fileEl.files[0];
   if (!f) return alert('Choose a file first');
   if (!f.type.startsWith('image/')) return alert('Images only');
   if (f.size > MAX_BYTES) return alert('Max 10 MB');
 
-  // preview
   const reader = new FileReader();
   reader.onload = () => { preview.src = reader.result; preview.style.display = 'block'; };
   reader.readAsDataURL(f);
 
-  try {
-    await uploadFile(f.name, f.type, f);
-  } catch (e) { console.error(e); alert(e.message || e); }
+  try { await uploadFile(f.name, f.type, f); }
+  catch (e) { console.error(e); alert(e.message || e); }
 };
 
-// ========== New: Camera flow ==========
-openCam.onclick = async () => {
-  try {
-    // HTTPS is required on the web; localhost is allowed by most browsers
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false
-    });
-    video.srcObject = stream;
-    await video.play();
-    videoBox.style.display = 'block';
-    snapBtn.style.display = 'inline-block';
-    retake.style.display = 'none';
-    closeCam.style.display = 'inline-block';
-    status.textContent = 'Camera ready — frame your shot';
-  } catch (err) {
-    console.error(err);
-    alert('Could not access camera. Try HTTPS/localhost or check permissions.');
-  }
+// ===== Camera flow =====
+openCam.onclick = async () => { await startCamera(facing); };
+
+flipBtn.onclick = async () => {
+  facing = (facing === 'user') ? 'environment' : 'user';
+  await startCamera(facing, /*restart*/true);
 };
 
 snapBtn.onclick = async () => {
   if (!stream) return;
-  const w = video.videoWidth || 1280;
-  const h = video.videoHeight || 720;
+  const w = video.videoWidth || 1280, h = video.videoHeight || 720;
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   ctx.drawImage(video, 0, 0, w, h);
 
-  // Convert to JPEG (quality ~92%). Re-compress if needed to keep under 10MB.
   const blob = await canvasToJpeg(canvas, 0.92);
-  if (blob.size > MAX_BYTES) {
-    const q = Math.max(0.6, 0.92 * (MAX_BYTES / blob.size)); // naive scale-down
-    const blob2 = await canvasToJpeg(canvas, q);
-    if (blob2.size > MAX_BYTES) return alert('Captured image exceeds 10MB even after compression.');
-    await uploadCaptured(blob2);
-  } else {
-    await uploadCaptured(blob);
-  }
+  const finalBlob = (blob.size > MAX_BYTES) ? await canvasToJpeg(canvas, Math.max(0.6, 0.92 * (MAX_BYTES / blob.size))) : blob;
+  if (finalBlob.size > MAX_BYTES) return alert('Captured image exceeds 10MB even after compression.');
+
+  stopStream();
+  const urlObj = URL.createObjectURL(finalBlob);
+  preview.src = urlObj; preview.style.display = 'block';
+
+  const ts = new Date().toISOString().replace(/[:.]/g,'');
+  const name = `camera_${ts}.jpg`;
+  try { await uploadFile(name, 'image/jpeg', finalBlob); retake.style.display = 'inline-block'; }
+  catch (e) { console.error(e); alert(e.message || e); }
 };
 
-retake.onclick = () => {
-  if (!stream) return;
-  status.textContent = 'Camera ready — retake';
-  preview.style.display = 'none';
-  snapBtn.style.display = 'inline-block';
-  retake.style.display = 'none';
-};
+retake.onclick = () => { if (!stream) startCamera(facing); };
 
 closeCam.onclick = () => stopStream();
 
-async function uploadCaptured(blob) {
+async function startCamera(desiredFacing, restart=false) {
   try {
-    stopStream(); // freeze frame after capture
-    const urlObj = URL.createObjectURL(blob);
-    preview.src = urlObj; preview.style.display = 'block';
+    if (restart) stopStream();
+    const constraintsList = [
+      { video: { facingMode: { exact: desiredFacing } }, audio: false },
+      { video: { facingMode: desiredFacing }, audio: false },
+      { video: true, audio: false } // final fallback
+    ];
+    let lastErr = null;
+    for (const c of constraintsList) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(c);
+        break;
+      } catch (e) { lastErr = e; }
+    }
+    if (!stream) throw lastErr || new Error('No camera available');
 
-    // give it a filename
-    const ts = new Date().toISOString().replace(/[:.]/g,'');
-    const name = `camera_${ts}.jpg`;
-    await uploadFile(name, 'image/jpeg', blob);
-    retake.style.display = 'inline-block';
-  } catch (e) {
-    console.error(e);
-    alert(e.message || e);
+    video.srcObject = stream;
+    await video.play();
+    videoBox.style.display = 'block';
+    snapBtn.style.display = 'inline-block';
+    flipBtn.style.display = 'inline-block';
+    retake.style.display = 'none';
+    closeCam.style.display = 'inline-block';
+    status.textContent = `Camera ready — ${desiredFacing === 'user' ? 'front' : 'rear'}`;
+  } catch (err) {
+    console.error(err);
+    alert('Could not access camera. Use HTTPS/localhost and allow permissions.');
   }
 }
 
 function stopStream() {
-  if (stream) {
-    stream.getTracks().forEach(t => t.stop());
-    stream = null;
-  }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   video.srcObject = null;
   videoBox.style.display = 'none';
   snapBtn.style.display = 'none';
+  flipBtn.style.display = 'none';
   closeCam.style.display = 'none';
 }
 
-// helpers
 function canvasToJpeg(c, quality=0.92) {
   return new Promise((resolve, reject) => {
     c.toBlob(b => b ? resolve(b) : reject(new Error('Failed to create image')), 'image/jpeg', quality);
   });
 }
 
-// shared upload logic
+// ===== Shared upload logic =====
 async function uploadFile(filename, contentType, dataBlob) {
   status.textContent = 'Requesting URL…';
   const r = await fetch(API, {
